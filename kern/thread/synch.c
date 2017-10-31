@@ -155,7 +155,16 @@ lock_create(const char *name)
         }
 
         // add stuff here as needed
-
+	lock->lk_wchan = wchan_create(lock->lk_name);
+        if (lock->lk_wchan == NULL) {
+        		kfree(lock->lk_name);
+        		kfree(lock);
+        		return NULL;
+        }
+	
+	lock->lk_thread = NULL;
+        spinlock_init(&lock->lk_lock);
+        
         return lock;
 }
 
@@ -163,37 +172,64 @@ void
 lock_destroy(struct lock *lock)
 {
         KASSERT(lock != NULL);
+	KASSERT(!lock_do_i_hold(lock));
 
-        // add stuff here as needed
+	spinlock_cleanup(&lock->lk_lock);
+	wchan_destroy(lock->lk_wchan);
 
-        kfree(lock->lk_name);
-        kfree(lock);
+	kfree(lock->lk_name);
+	kfree(lock);
 }
 
 void
 lock_acquire(struct lock *lock)
 {
-        // Write this
+       // Write this
+	
+	KASSERT(lock != NULL);
+	KASSERT(!lock_do_i_hold(lock));
 
-        (void)lock;  // suppress warning until code gets written
+	spinlock_acquire(&lock->lk_lock);
+
+	while(true) {
+		if (lock->lk_thread == NULL) {
+			lock->lk_thread = curthread;
+			spinlock_release(&lock->lk_lock);
+			break;
+		}
+
+		wchan_sleep(lock->lk_wchan, &lock->lk_lock);
+	}
+	
+       // (void)lock;  // suppress warning until code gets written
 }
 
 void
 lock_release(struct lock *lock)
 {
         // Write this
+	KASSERT(lock != NULL);
+	KASSERT(lock_do_i_hold(lock));
 
-        (void)lock;  // suppress warning until code gets written
+	spinlock_acquire(&lock->lk_lock);
+
+	wchan_wakeone(lock->lk_wchan, &lock->lk_lock);
+
+	lock->lk_thread = NULL;
+	spinlock_release(&lock->lk_lock);
+        //(void)lock;  // suppress warning until code gets written
 }
 
 bool
 lock_do_i_hold(struct lock *lock)
 {
         // Write this
+	
+	return lock->lk_thread == curthread;
 
-        (void)lock;  // suppress warning until code gets written
+        //(void)lock;  // suppress warning until code gets written
 
-        return true; // dummy until code gets written
+        //return true; // dummy until code gets written
 }
 
 ////////////////////////////////////////////////////////////
@@ -219,6 +255,14 @@ cv_create(const char *name)
 
         // add stuff here as needed
 
+	cv->cv_wchan = wchan_create(cv->cv_name);
+	if (cv->cv_wchan == NULL) {
+		kfree(cv->cv_name);
+		kfree(cv);
+		return NULL;
+	}
+
+	spinlock_init(&cv->cv_lock);
         return cv;
 }
 
@@ -227,7 +271,8 @@ cv_destroy(struct cv *cv)
 {
         KASSERT(cv != NULL);
 
-        // add stuff here as needed
+        wchan_destroy(cv->cv_wchan);
+	spinlock_cleanup(&cv->cv_lock);
 
         kfree(cv->cv_name);
         kfree(cv);
@@ -237,22 +282,57 @@ void
 cv_wait(struct cv *cv, struct lock *lock)
 {
         // Write this
-        (void)cv;    // suppress warning until code gets written
-        (void)lock;  // suppress warning until code gets written
+
+	
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+	KASSERT(lock_do_i_hold(lock));
+
+	spinlock_acquire(&cv->cv_lock);
+
+	lock_release(lock);
+	wchan_sleep(cv->cv_wchan, &cv->cv_lock);
+
+	spinlock_release(&cv->cv_lock);
+	lock_acquire(lock);
+	
+        //(void)cv;    // suppress warning until code gets written
+        //(void)lock;  // suppress warning until code gets written
 }
 
 void
 cv_signal(struct cv *cv, struct lock *lock)
 {
         // Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+	KASSERT(lock_do_i_hold(lock));
+
+	spinlock_acquire(&cv->cv_lock);
+	
+	wchan_wakeone(cv->cv_wchan, &cv->cv_lock);
+	
+	spinlock_release(&cv->cv_lock);
+	//(void)cv;    // suppress warning until code gets written
+	//(void)lock;  // suppress warning until code gets written
 }
 
 void
 cv_broadcast(struct cv *cv, struct lock *lock)
 {
 	// Write this
-	(void)cv;    // suppress warning until code gets written
-	(void)lock;  // suppress warning until code gets written
+	
+	KASSERT(cv != NULL);
+	KASSERT(lock != NULL);
+	KASSERT(lock_do_i_hold(lock));
+
+	spinlock_acquire(&cv->cv_lock);
+	
+	wchan_wakeall(cv->cv_wchan, &cv->cv_lock);
+
+	spinlock_release(&cv->cv_lock);
+	
+	//(void)cv;    // suppress warning until code gets written
+	//(void)lock;  // suppress warning until code gets written
 }
